@@ -10,9 +10,6 @@ import os
 from datetime import datetime
 from pathlib import Path
 from playwright.async_api import async_playwright
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 import base64
 
 class ShopifyQA:
