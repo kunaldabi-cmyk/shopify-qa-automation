@@ -1,4 +1,4 @@
-name: Shopify QA with Google Docs Report
+name: Shopify QA Automation
 
 on:
   schedule:
@@ -12,51 +12,30 @@ jobs:
     
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
       
       - name: Install dependencies
         run: |
-          pip install playwright google-api-python-client google-auth-httplib2 google-auth-oauthlib
+          pip install playwright
           playwright install chromium
           playwright install-deps
       
-      # Create Google credentials file from secret
-      - name: Setup Google Credentials
-        run: |
-          echo '${{ secrets.GOOGLE_CREDENTIALS }}' > credentials.json
-          export GOOGLE_CREDENTIALS_PATH=./credentials.json
-      
-      # Run QA tests
       - name: Run QA Tests
         run: |
           python shopify_qa.py $(cat urls.txt)
       
-      # Generate Google Doc with screenshots
-      - name: Generate Google Doc Report
-        run: |
-          python create_google_doc.py
-        env:
-          GOOGLE_CREDENTIALS_PATH: ./credentials.json
-      
-      # Save the Google Doc URL
-      - name: Extract Google Doc URL
-        id: doc_url
-        run: |
-          DOC_URL=$(cat google_doc_url.txt)
-          echo "doc_url=$DOC_URL" >> $GITHUB_OUTPUT
-      
-      # Upload artifacts (backup)
       - name: Upload Screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: qa-screenshots-${{ github.run_number }}
           path: qa-screenshots/
+          retention-days: 30
       
       - name: Upload Report
         if: always()
@@ -64,18 +43,24 @@ jobs:
         with:
           name: qa-report-${{ github.run_number }}
           path: qa-report.json
+          retention-days: 30
       
-      # Calculate issue counts
       - name: Calculate Stats
         id: stats
+        if: always()
         run: |
-          TOTAL=$(python -c "import json; print(len(json.load(open('qa-report.json'))))" || echo "0")
-          CRITICAL=$(python -c "import json; data=json.load(open('qa-report.json')); print(len([i for i in data if i['severity'] in ['critical', 'high']]))" || echo "0")
+          if [ -f qa-report.json ]; then
+            TOTAL=$(python -c "import json; print(len(json.load(open('qa-report.json'))))" 2>/dev/null || echo "0")
+            CRITICAL=$(python -c "import json; data=json.load(open('qa-report.json')); print(len([i for i in data if i.get('severity') in ['critical', 'high']]))" 2>/dev/null || echo "0")
+          else
+            TOTAL=0
+            CRITICAL=0
+          fi
           echo "total=$TOTAL" >> $GITHUB_OUTPUT
           echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
       
-      # Send comprehensive email notification
       - name: Send Email Notification
+        if: always()
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
@@ -90,109 +75,129 @@ jobs:
             <html>
             <head>
               <style>
-                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-                .header { background: #4CAF50; color: white; padding: 20px; text-align: center; }
-                .content { padding: 20px; }
-                .stats { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }
-                .stat-item { display: inline-block; margin: 0 20px; }
-                .critical { color: #f44336; font-weight: bold; }
+                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }
+                .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; text-align: center; border-radius: 10px 10px 0 0; }
+                .header h1 { margin: 0; font-size: 24px; }
+                .content { background: white; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px; }
+                .stats { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }
+                .stat-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e0e0e0; }
+                .stat-row:last-child { border-bottom: none; }
+                .stat-label { font-weight: 600; color: #666; }
+                .stat-value { font-weight: 700; font-size: 18px; }
+                .critical { color: #dc3545; }
                 .button { 
                   display: inline-block; 
-                  padding: 12px 24px; 
-                  background: #2196F3; 
-                  color: white; 
+                  padding: 14px 28px; 
+                  background: #667eea;
+                  color: white !important; 
                   text-decoration: none; 
-                  border-radius: 5px; 
-                  margin: 10px 5px;
+                  border-radius: 6px; 
+                  margin: 15px 10px 15px 0;
+                  font-weight: 600;
+                  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
                 }
-                .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666; }
+                .checklist { background: #e8f5e9; padding: 15px; border-radius: 8px; border-left: 4px solid #4caf50; }
+                .checklist ul { margin: 10px 0; padding-left: 20px; }
+                .checklist li { margin: 5px 0; }
+                .alert { background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107; margin: 20px 0; }
+                .footer { margin-top: 30px; padding-top: 20px; border-top: 2px solid #e0e0e0; font-size: 13px; color: #666; text-align: center; }
               </style>
             </head>
             <body>
               <div class="header">
                 <h1>🔍 Shopify QA Automation Report</h1>
+                <p style="margin: 10px 0 0 0; opacity: 0.9;">Automated Testing Results</p>
               </div>
               
               <div class="content">
-                <h2>Test Summary</h2>
+                <h2 style="margin-top: 0;">Test Summary</h2>
                 
                 <div class="stats">
-                  <div class="stat-item">
-                    <strong>Total Issues:</strong> ${{ steps.stats.outputs.total }}
+                  <div class="stat-row">
+                    <span class="stat-label">Total Issues Found:</span>
+                    <span class="stat-value">${{ steps.stats.outputs.total }}</span>
                   </div>
-                  <div class="stat-item critical">
-                    <strong>Critical/High:</strong> ${{ steps.stats.outputs.critical }}
+                  <div class="stat-row">
+                    <span class="stat-label">Critical/High Priority:</span>
+                    <span class="stat-value critical">${{ steps.stats.outputs.critical }}</span>
                   </div>
-                  <div class="stat-item">
-                    <strong>Run Time:</strong> ${{ github.event.repository.updated_at }}
+                  <div class="stat-row">
+                    <span class="stat-label">Test Run:</span>
+                    <span class="stat-value" style="font-size: 14px;">#${{ github.run_number }}</span>
                   </div>
                 </div>
+
+                ${{ steps.stats.outputs.critical > 0 && '<div class="alert"><strong>⚠️ Attention Required!</strong><br>Critical issues detected that may be affecting customer experience.</div>' || '' }}
                 
-                <h3>📄 Full Report Available</h3>
-                <p>Your complete QA report with screenshots has been generated:</p>
-                
-                <a href="${{ steps.doc_url.outputs.doc_url }}" class="button">
-                  📄 View Google Doc Report
-                </a>
+                <h3>📁 View Full Results</h3>
+                <p>Download complete test results and screenshots:</p>
                 
                 <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" class="button">
-                  📊 View GitHub Artifacts
+                  📊 View Screenshots & Details
                 </a>
                 
-                <h3>What Was Tested</h3>
-                <ul>
-                  <li>✅ Page loading and HTTP status</li>
-                  <li>✅ Image loading (broken images detection)</li>
-                  <li>✅ Layout issues (overlapping elements)</li>
-                  <li>✅ Add to cart functionality</li>
-                  <li>✅ Cart navigation</li>
-                  <li>✅ Checkout flow</li>
-                  <li>✅ Desktop + Mobile views</li>
-                </ul>
-                
-                ${{ steps.stats.outputs.critical > 0 && '<p class="critical">⚠️ <strong>ATTENTION REQUIRED:</strong> Critical issues detected that may be blocking customers from completing purchases!</p>' || '' }}
+                <div class="checklist">
+                  <strong>✅ What Was Tested:</strong>
+                  <ul>
+                    <li>Page loading and HTTP status</li>
+                    <li>Image loading and quality</li>
+                    <li>Layout and responsive design</li>
+                    <li>Add to cart functionality</li>
+                    <li>Shopping cart navigation</li>
+                    <li>Checkout flow accessibility</li>
+                    <li>Desktop and Mobile views</li>
+                  </ul>
+                </div>
                 
                 <div class="footer">
-                  <p>This is an automated report from your Shopify QA system.</p>
-                  <p>Tested during USA business hours to catch issues when your customers are active.</p>
+                  <p><strong>Shopify QA Automation</strong></p>
+                  <p>Tests run during USA business hours to catch issues when customers are most active.</p>
                 </div>
               </div>
             </body>
             </html>
           
           attachments: qa-report.json
+          ignore_missing_attachments: true
       
-      # Create GitHub issue for critical problems
       - name: Create GitHub Issue for Critical Problems
         if: steps.stats.outputs.critical > 0
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
+            
+            if (!fs.existsSync('qa-report.json')) {
+              console.log('No report file found');
+              return;
+            }
+            
             const issues = JSON.parse(fs.readFileSync('qa-report.json', 'utf8'));
             const critical = issues.filter(i => ['critical', 'high'].includes(i.severity));
             
+            if (critical.length === 0) {
+              return;
+            }
+            
             let body = '## 🚨 Critical QA Issues Detected\n\n';
+            body += `**Test Run:** #${{ github.run_number }}\n`;
             body += `**Found:** ${critical.length} critical/high severity issues\n\n`;
-            body += `**Google Doc Report:** ${{ steps.doc_url.outputs.doc_url }}\n\n`;
             body += '---\n\n';
             
             critical.slice(0, 10).forEach((issue, i) => {
               const emoji = issue.severity === 'critical' ? '🔴' : '🟠';
               body += `### ${emoji} ${i + 1}. ${issue.category} (${issue.device})\n\n`;
-              body += `- **Page:** ${issue.url}\n`;
-              body += `- **Issue:** ${issue.issue}\n`;
-              body += `- **Severity:** ${issue.severity}\n`;
-              body += `- **Time:** ${issue.timestamp}\n\n`;
+              body += `**Page:** ${issue.url}\n`;
+              body += `**Issue:** ${issue.issue}\n`;
+              body += `**Severity:** ${issue.severity}\n`;
+              body += `**Time:** ${issue.timestamp}\n\n`;
             });
             
             if (critical.length > 10) {
-              body += `\n_...and ${critical.length - 10} more issues. See full report._\n\n`;
+              body += `\n_...and ${critical.length - 10} more issues._\n\n`;
             }
             
-            body += '---\n\n';
-            body += `📄 [View Complete Report with Screenshots](${{ steps.doc_url.outputs.doc_url }})\n\n`;
-            body += `📊 [View Test Artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\n`;
+            body += `📊 [View Full Report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\n`;
             
             await github.rest.issues.create({
               owner: context.repo.owner,
