@@ -1,565 +1,588 @@
 #!/usr/bin/env python3
 """
-Simplified Shopify QA Automation (Python)
-Easier setup than Node.js version - good for quick testing
+Enhanced Shopify QA Automation - Complete User Journey Testing
+Tests complete purchase flow with screenshots at every step
 """
 
 import asyncio
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from playwright.async_api import async_playwright
-import base64
 
-class ShopifyQA:
-    def __init__(self, screenshot_dir='./qa-screenshots'):
-        self.screenshot_dir = Path(screenshot_dir)
+class EnhancedShopifyQA:
+    def __init__(self):
+        self.screenshot_dir = Path('./qa-screenshots')
         self.screenshot_dir.mkdir(exist_ok=True)
         self.issues = []
         self.screenshot_counter = 0
-        
-    async def run_tests(self, urls):
-        """Run QA tests on list of URLs"""
+    
+    async def test_url(self, url, device='desktop'):
+        """Test a single URL with complete user journey"""
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             
-            for url in urls:
-                print(f"\n=== Testing: {url} ===")
+            if device == 'mobile':
+                context = await browser.new_context(
+                    viewport={'width': 375, 'height': 812},
+                    user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)',
+                    is_mobile=True,
+                    has_touch=True
+                )
+            else:
+                context = await browser.new_context(
+                    viewport={'width': 1920, 'height': 1080}
+                )
+            
+            page = await context.new_page()
+            
+            # Track errors
+            console_errors = []
+            network_errors = []
+            
+            page.on('console', lambda msg: 
+                console_errors.append(msg.text) if msg.type == 'error' else None
+            )
+            
+            page.on('requestfailed', lambda req:
+                network_errors.append({'url': req.url, 'failure': str(req.failure)})
+            )
+            
+            try:
+                print(f"\n{'='*70}")
+                print(f"Testing: {url}")
+                print(f"Device: {device.upper()}")
+                print('='*70)
                 
-                # Test Desktop
-                await self.test_page(browser, url, 'desktop')
+                # STEP 1: Navigate to page
+                print("\n[STEP 1] Loading page...")
+                response = await page.goto(url, timeout=45000, wait_until='networkidle')
                 
-                # Test Mobile
-                await self.test_page(browser, url, 'mobile')
+                # Wait 10-15 seconds as requested
+                print("  Waiting 15 seconds for page to fully load...")
+                await page.wait_for_timeout(15000)
+                
+                # Screenshot: Initial page load
+                screenshot_path = await self.take_screenshot(
+                    page, url, device, '01_page_loaded',
+                    "Page loaded - initial view"
+                )
+                
+                # Check HTTP status
+                if response.status != 200:
+                    await self.log_issue({
+                        'url': url,
+                        'device': device,
+                        'severity': 'high',
+                        'category': 'HTTP Error',
+                        'issue': f'Page returned status {response.status}',
+                        'screenshot': screenshot_path,
+                        'timestamp': datetime.now().isoformat()
+                    })
+                
+                # Check for broken images
+                broken_images = await page.evaluate('''
+                    () => Array.from(document.querySelectorAll('img'))
+                        .filter(img => !img.complete || img.naturalWidth === 0)
+                        .length
+                ''')
+                
+                if broken_images > 0:
+                    await self.log_issue({
+                        'url': url,
+                        'device': device,
+                        'severity': 'high',
+                        'category': 'Broken Images',
+                        'issue': f'{broken_images} images failed to load',
+                        'screenshot': screenshot_path,
+                        'timestamp': datetime.now().isoformat()
+                    })
+                
+                # STEP 2: Look for "Front & Rear Seats" option
+                print("\n[STEP 2] Looking for 'Front & Rear Seats' option...")
+                
+                # Try multiple selectors for the radio button
+                seat_selectors = [
+                    'input[type="radio"][value*="Front"][value*="Rear"]',
+                    'input[value*="Front & Rear"]',
+                    'input[value*="front-rear"]',
+                    'label:has-text("Front & Rear Seats") input',
+                    'input[id*="front-rear"]',
+                    'input[name*="seat"][value*="both"]'
+                ]
+                
+                seat_option = None
+                for selector in seat_selectors:
+                    try:
+                        seat_option = await page.query_selector(selector)
+                        if seat_option:
+                            print(f"  ✓ Found seat option with selector: {selector}")
+                            break
+                    except:
+                        continue
+                
+                # If radio input found, find its label for clicking
+                if seat_option:
+                    # Get the label associated with this input
+                    label_element = await page.evaluate('''(input) => {
+                        const id = input.id;
+                        if (id) {
+                            const label = document.querySelector(`label[for="${id}"]`);
+                            if (label) return label;
+                        }
+                        // Or find parent label
+                        return input.closest('label');
+                    }''', seat_option)
+                    
+                    # Hover over the option
+                    if label_element:
+                        await page.hover(f'label[for="{await seat_option.get_attribute("id")}"]')
+                    else:
+                        await seat_option.hover()
+                    
+                    await page.wait_for_timeout(1000)
+                    
+                    # Screenshot: Before clicking seat option
+                    screenshot_path = await self.take_screenshot(
+                        page, url, device, '02_before_select_seats',
+                        "Hovering over 'Front & Rear Seats' option"
+                    )
+                    
+                    # Click the option
+                    print("  Clicking 'Front & Rear Seats'...")
+                    await seat_option.click(force=True)
+                    await page.wait_for_timeout(2000)
+                    
+                    # Screenshot: After clicking seat option
+                    screenshot_path = await self.take_screenshot(
+                        page, url, device, '03_seats_selected',
+                        "Selected 'Front & Rear Seats'"
+                    )
+                    print("  ✓ 'Front & Rear Seats' selected")
+                
+                else:
+                    print("  ⚠ Could not find 'Front & Rear Seats' option")
+                    await self.log_issue({
+                        'url': url,
+                        'device': device,
+                        'severity': 'high',
+                        'category': 'Element Not Found',
+                        'issue': 'Could not find "Front & Rear Seats" option',
+                        'screenshot': screenshot_path,
+                        'timestamp': datetime.now().isoformat()
+                    })
+                
+                # STEP 3: Wait for and click color selection button
+                print("\n[STEP 3] Looking for color selection button...")
+                await page.wait_for_timeout(2000)
+                
+                color_selectors = [
+                    'button:has-text("Select Color")',
+                    'button:has-text("Choose Color")',
+                    'a:has-text("Select Color")',
+                    'button[class*="color"]',
+                    'button:has-text("Color")',
+                    '.color-selector button',
+                    'button:has-text("Select")'
+                ]
+                
+                color_button = None
+                for selector in color_selectors:
+                    try:
+                        color_button = await page.query_selector(selector)
+                        if color_button and await color_button.is_visible():
+                            print(f"  ✓ Found color button with selector: {selector}")
+                            break
+                    except:
+                        continue
+                
+                if color_button:
+                    # Hover over color button
+                    await color_button.hover()
+                    await page.wait_for_timeout(1000)
+                    
+                    # Screenshot: Before clicking color button
+                    screenshot_path = await self.take_screenshot(
+                        page, url, device, '04_before_color_select',
+                        "Hovering over color selection button"
+                    )
+                    
+                    # Click color button
+                    print("  Clicking color selection button...")
+                    await color_button.click()
+                    await page.wait_for_timeout(2000)
+                    
+                    # Screenshot: After clicking color button
+                    screenshot_path = await self.take_screenshot(
+                        page, url, device, '05_color_options_visible',
+                        "Color options displayed"
+                    )
+                    print("  ✓ Color selection opened")
+                
+                else:
+                    print("  ⚠ Color selection button not found")
+                
+                # STEP 4: Select black color (or any available)
+                print("\n[STEP 4] Selecting color...")
+                
+                color_option_selectors = [
+                    'button:has-text("Black")',
+                    'label:has-text("Black")',
+                    'input[value*="black"]',
+                    'div[data-color="black"]',
+                    'button[title*="Black"]',
+                    # Fallback to any color
+                    'button[class*="color-option"]:first-child',
+                    '.color-swatch:first-child'
+                ]
+                
+                color_selected = False
+                for selector in color_option_selectors:
+                    try:
+                        color_option = await page.query_selector(selector)
+                        if color_option and await color_option.is_visible():
+                            # Hover
+                            await color_option.hover()
+                            await page.wait_for_timeout(1000)
+                            
+                            # Screenshot: Before selecting color
+                            screenshot_path = await self.take_screenshot(
+                                page, url, device, '06_before_color_click',
+                                f"Hovering over color option"
+                            )
+                            
+                            # Click
+                            print(f"  Clicking color option...")
+                            await color_option.click()
+                            await page.wait_for_timeout(2000)
+                            
+                            # Screenshot: After selecting color
+                            screenshot_path = await self.take_screenshot(
+                                page, url, device, '07_color_selected',
+                                "Color selected"
+                            )
+                            
+                            print("  ✓ Color selected")
+                            color_selected = True
+                            break
+                    except:
+                        continue
+                
+                if not color_selected:
+                    print("  ⚠ Could not select color")
+                
+                # STEP 5: Click "Add to Cart"
+                print("\n[STEP 5] Looking for 'Add to Cart' button...")
+                
+                add_to_cart_selectors = [
+                    'button:has-text("Add to Cart")',
+                    'button[name="add"]',
+                    'button[type="submit"]:has-text("Add")',
+                    'input[type="submit"][value*="Add"]',
+                    'button.add-to-cart',
+                    'button[class*="add-cart"]',
+                    '.product-form__submit'
+                ]
+                
+                cart_added = False
+                for selector in add_to_cart_selectors:
+                    try:
+                        add_button = await page.query_selector(selector)
+                        if add_button and await add_button.is_visible() and await add_button.is_enabled():
+                            # Hover
+                            await add_button.hover()
+                            await page.wait_for_timeout(1000)
+                            
+                            # Screenshot: Before adding to cart
+                            screenshot_path = await self.take_screenshot(
+                                page, url, device, '08_before_add_to_cart',
+                                "Hovering over 'Add to Cart' button"
+                            )
+                            
+                            # Click
+                            print("  Clicking 'Add to Cart'...")
+                            await add_button.click()
+                            await page.wait_for_timeout(3000)  # Wait for cart popup
+                            
+                            # Screenshot: After adding to cart (with popup)
+                            screenshot_path = await self.take_screenshot(
+                                page, url, device, '09_added_to_cart_popup',
+                                "Item added to cart - popup visible"
+                            )
+                            
+                            print("  ✓ Added to cart")
+                            cart_added = True
+                            break
+                    except Exception as e:
+                        print(f"  Error with selector {selector}: {str(e)}")
+                        continue
+                
+                if not cart_added:
+                    print("  ✗ Failed to add to cart")
+                    await self.log_issue({
+                        'url': url,
+                        'device': device,
+                        'severity': 'critical',
+                        'category': 'Add to Cart Failed',
+                        'issue': 'Could not add product to cart',
+                        'screenshot': screenshot_path,
+                        'timestamp': datetime.now().isoformat()
+                    })
+                
+                # STEP 6: Find and click "Continue to Checkout" in popup
+                print("\n[STEP 6] Looking for 'Continue to Checkout' button...")
+                await page.wait_for_timeout(2000)
+                
+                checkout_selectors = [
+                    'button:has-text("Continue to Checkout")',
+                    'a:has-text("Continue to Checkout")',
+                    'button:has-text("Checkout")',
+                    'a:has-text("Checkout")',
+                    'a[href*="checkout"]',
+                    'button[class*="checkout"]',
+                    '.cart-popup button:has-text("Checkout")',
+                    'button.btn-checkout'
+                ]
+                
+                checkout_clicked = False
+                for selector in checkout_selectors:
+                    try:
+                        checkout_button = await page.query_selector(selector)
+                        if checkout_button and await checkout_button.is_visible():
+                            # Scroll into view
+                            await checkout_button.scroll_into_view_if_needed()
+                            await page.wait_for_timeout(1000)
+                            
+                            # Hover
+                            await checkout_button.hover()
+                            await page.wait_for_timeout(1000)
+                            
+                            # Screenshot: Before clicking checkout
+                            screenshot_path = await self.take_screenshot(
+                                page, url, device, '10_before_checkout_click',
+                                "Hovering over 'Continue to Checkout' button"
+                            )
+                            
+                            # Click
+                            print("  Clicking 'Continue to Checkout'...")
+                            await checkout_button.click()
+                            
+                            # Wait for navigation
+                            await page.wait_for_load_state('networkidle', timeout=15000)
+                            
+                            # Additional wait for checkout page
+                            print("  Waiting 10 seconds for checkout page to load...")
+                            await page.wait_for_timeout(10000)
+                            
+                            # Screenshot: Checkout page loaded
+                            screenshot_path = await self.take_screenshot(
+                                page, url, device, '11_checkout_page_loaded',
+                                "Checkout page fully loaded"
+                            )
+                            
+                            # Verify we're on checkout
+                            current_url = page.url
+                            if 'checkout' in current_url.lower():
+                                print(f"  ✓ Successfully reached checkout page")
+                                print(f"  Checkout URL: {current_url}")
+                            else:
+                                print(f"  ⚠ May not be on checkout page")
+                                print(f"  Current URL: {current_url}")
+                                await self.log_issue({
+                                    'url': url,
+                                    'device': device,
+                                    'severity': 'high',
+                                    'category': 'Checkout Navigation',
+                                    'issue': f'Clicked checkout but URL is: {current_url}',
+                                    'screenshot': screenshot_path,
+                                    'timestamp': datetime.now().isoformat()
+                                })
+                            
+                            checkout_clicked = True
+                            break
+                    except Exception as e:
+                        print(f"  Error with selector {selector}: {str(e)}")
+                        continue
+                
+                if not checkout_clicked:
+                    print("  ✗ Failed to click checkout button")
+                    await self.log_issue({
+                        'url': url,
+                        'device': device,
+                        'severity': 'critical',
+                        'category': 'Checkout Button Not Found',
+                        'issue': 'Could not find or click checkout button',
+                        'screenshot': screenshot_path,
+                        'timestamp': datetime.now().isoformat()
+                    })
+                
+                # Final screenshot
+                screenshot_path = await self.take_screenshot(
+                    page, url, device, '12_final_state',
+                    "Final page state"
+                )
+                
+                # Log any console errors
+                if console_errors:
+                    await self.log_issue({
+                        'url': url,
+                        'device': device,
+                        'severity': 'medium',
+                        'category': 'JavaScript Errors',
+                        'issue': f'Console errors: {len(console_errors)} errors detected',
+                        'screenshot': screenshot_path,
+                        'timestamp': datetime.now().isoformat()
+                    })
+                
+                # Log network errors
+                if network_errors:
+                    await self.log_issue({
+                        'url': url,
+                        'device': device,
+                        'severity': 'medium',
+                        'category': 'Network Errors',
+                        'issue': f'Failed to load {len(network_errors)} resources',
+                        'screenshot': screenshot_path,
+                        'timestamp': datetime.now().isoformat()
+                    })
+                
+                print("\n" + "="*70)
+                print(f"✓ Completed testing {url} on {device}")
+                print("="*70)
+            
+            except Exception as e:
+                print(f"\n✗ ERROR: {str(e)}")
+                screenshot_path = await self.take_screenshot(
+                    page, url, device, 'error',
+                    f"Error occurred: {str(e)}"
+                )
+                
+                await self.log_issue({
+                    'url': url,
+                    'device': device,
+                    'severity': 'critical',
+                    'category': 'Test Failure',
+                    'issue': f'Test failed: {str(e)}',
+                    'screenshot': screenshot_path,
+                    'timestamp': datetime.now().isoformat()
+                })
             
             await browser.close()
-        
-        return self.issues
     
-    async def test_page(self, browser, url, device_type):
-        """Test a single page on specific device"""
-        if device_type == 'mobile':
-            context = await browser.new_context(
-                viewport={'width': 375, 'height': 812},
-                user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)',
-                is_mobile=True,
-                has_touch=True
-            )
-        else:
-            context = await browser.new_context(
-                viewport={'width': 1920, 'height': 1080}
-            )
-        
-        page = await context.new_page()
-        
-        # Track errors
-        console_errors = []
-        network_errors = []
-        
-        page.on('console', lambda msg: 
-            console_errors.append(msg.text) if msg.type == 'error' else None
-        )
-        
-        page.on('requestfailed', lambda req:
-            network_errors.append({
-                'url': req.url,
-                'failure': req.failure
-            })
-        )
-        
-        try:
-            # Navigate
-            print(f"Loading {url} ({device_type})...")
-            response = await page.goto(url, wait_until='networkidle', timeout=30000)
-            
-            # Initial screenshot
-            initial_screenshot = await self.take_screenshot(page, url, device_type, 'initial')
-            
-            # Check HTTP status
-            if response.status != 200:
-                await self.log_issue({
-                    'page': url,
-                    'device': device_type,
-                    'severity': 'high',
-                    'category': 'HTTP Error',
-                    'issue': f'Page returned status code {response.status}',
-                    'screenshot': initial_screenshot
-                })
-            
-            # Check visual issues
-            await self.check_visual_issues(page, url, device_type)
-            
-            # Check console errors
-            if console_errors:
-                await self.log_issue({
-                    'page': url,
-                    'device': device_type,
-                    'severity': 'medium',
-                    'category': 'JavaScript Error',
-                    'issue': f'Console errors: {", ".join(console_errors[:3])}',
-                    'screenshot': initial_screenshot
-                })
-            
-            # Check network failures
-            if network_errors:
-                screenshot = await self.take_screenshot(page, url, device_type, 'network-error')
-                await self.log_issue({
-                    'page': url,
-                    'device': device_type,
-                    'severity': 'high',
-                    'category': 'Network Error',
-                    'issue': f'Failed resources: {", ".join([e["url"] for e in network_errors[:3]])}',
-                    'screenshot': screenshot
-                })
-            
-            # Check if product page
-            is_product = await page.evaluate('''() => {
-                return document.querySelector('[data-product-json]') !== null ||
-                       document.querySelector('.product-form') !== null ||
-                       document.querySelector('form[action*="/cart/add"]') !== null;
-            }''')
-            
-            if is_product:
-                await self.test_product_page(page, url, device_type)
-        
-        except Exception as e:
-            screenshot = await self.take_screenshot(page, url, device_type, 'error')
-            await self.log_issue({
-                'page': url,
-                'device': device_type,
-                'severity': 'critical',
-                'category': 'Page Load Error',
-                'issue': f'Failed to test page: {str(e)}',
-                'screenshot': screenshot
-            })
-        
-        await context.close()
-    
-    async def check_visual_issues(self, page, url, device_type):
-        """Check for visual/layout issues"""
-        
-        # Check broken images
-        broken_images = await page.evaluate('''() => {
-            const images = Array.from(document.querySelectorAll('img'));
-            return images
-                .filter(img => !img.complete || img.naturalWidth === 0)
-                .map(img => ({ src: img.src, alt: img.alt || 'No alt' }));
-        }''')
-        
-        if broken_images:
-            screenshot = await self.take_screenshot(page, url, device_type, 'broken-images')
-            await self.log_issue({
-                'page': url,
-                'device': device_type,
-                'severity': 'high',
-                'category': 'Broken Images',
-                'issue': f'{len(broken_images)} images failed to load',
-                'screenshot': screenshot
-            })
-        
-        # Check for overlapping elements (simplified)
-        overlaps = await page.evaluate('''() => {
-            function overlap(el1, el2) {
-                const r1 = el1.getBoundingClientRect();
-                const r2 = el2.getBoundingClientRect();
-                return !(r1.right < r2.left || r1.left > r2.right || 
-                         r1.bottom < r2.top || r1.top > r2.bottom);
-            }
-            
-            const elements = Array.from(document.querySelectorAll('button, a, input'));
-            let count = 0;
-            
-            for (let i = 0; i < elements.length && count < 5; i++) {
-                for (let j = i + 1; j < elements.length; j++) {
-                    if (overlap(elements[i], elements[j])) count++;
-                }
-            }
-            
-            return count;
-        }''')
-        
-        if overlaps > 0:
-            screenshot = await self.take_screenshot(page, url, device_type, 'overlapping')
-            await self.log_issue({
-                'page': url,
-                'device': device_type,
-                'severity': 'medium',
-                'category': 'Layout Issue',
-                'issue': f'{overlaps} overlapping elements detected',
-                'screenshot': screenshot
-            })
-    
-    async def test_product_page(self, page, url, device_type):
-        """Test product page functionality"""
-        print(f"Testing product page ({device_type})...")
-        
-        try:
-            # Check stock status
-            sold_out = await page.evaluate('''() => {
-                const text = document.body.innerText.toLowerCase();
-                return text.includes('sold out') || text.includes('unavailable') ||
-                       document.querySelector('[disabled]') !== null;
-            }''')
-            
-            if sold_out:
-                screenshot = await self.take_screenshot(page, url, device_type, 'out-of-stock')
-                await self.log_issue({
-                    'page': url,
-                    'device': device_type,
-                    'severity': 'high',
-                    'category': 'Stock Status',
-                    'issue': 'Product out of stock',
-                    'screenshot': screenshot
-                })
-                return
-            
-            # Try to add to cart
-            selectors = [
-                'button[name="add"]',
-                'button[type="submit"].product-form__submit',
-                'button:has-text("Add to cart")',
-                '.product-form__submit'
-            ]
-            
-            added = False
-            for selector in selectors:
-                try:
-                    button = await page.query_selector(selector)
-                    if button and await button.is_visible() and await button.is_enabled():
-                        before_screenshot = await self.take_screenshot(
-                            page, url, device_type, 'before-add-cart'
-                        )
-                        
-                        await button.click()
-                        await page.wait_for_timeout(2000)
-                        
-                        after_screenshot = await self.take_screenshot(
-                            page, url, device_type, 'after-add-cart'
-                        )
-                        
-                        added = True
-                        print('✓ Added to cart')
-                        break
-                except:
-                    continue
-            
-            if not added:
-                screenshot = await self.take_screenshot(page, url, device_type, 'cart-failed')
-                await self.log_issue({
-                    'page': url,
-                    'device': device_type,
-                    'severity': 'critical',
-                    'category': 'Cart Functionality',
-                    'issue': 'Could not add to cart',
-                    'screenshot': screenshot
-                })
-                return
-            
-            # Navigate to cart
-            await self.test_cart_checkout(page, url, device_type)
-        
-        except Exception as e:
-            screenshot = await self.take_screenshot(page, url, device_type, 'product-error')
-            await self.log_issue({
-                'page': url,
-                'device': device_type,
-                'severity': 'high',
-                'category': 'Product Page Error',
-                'issue': f'Error: {str(e)}',
-                'screenshot': screenshot
-            })
-    
-    async def test_cart_checkout(self, page, url, device_type):
-        """Test cart and checkout flow"""
-        try:
-            # Try cart links
-            cart_selectors = ['a[href="/cart"]', 'a[href*="/cart"]', '.cart-link']
-            
-            navigated = False
-            for selector in cart_selectors:
-                try:
-                    link = await page.query_selector(selector)
-                    if link and await link.is_visible():
-                        await link.click()
-                        await page.wait_for_load_state('networkidle')
-                        
-                        cart_screenshot = await self.take_screenshot(
-                            page, url, device_type, 'cart-page'
-                        )
-                        
-                        navigated = True
-                        print('✓ Navigated to cart')
-                        break
-                except:
-                    continue
-            
-            if not navigated:
-                # Try direct navigation
-                cart_url = page.url.split('/')[0:3]
-                cart_url = '/'.join(cart_url) + '/cart'
-                await page.goto(cart_url)
-                await page.wait_for_load_state('networkidle')
-            
-            # Try checkout
-            checkout_selectors = [
-                'button[name="checkout"]',
-                'input[value*="Checkout"]',
-                'button:has-text("Checkout")',
-                '.cart__checkout-button'
-            ]
-            
-            for selector in checkout_selectors:
-                try:
-                    button = await page.query_selector(selector)
-                    if button and await button.is_visible():
-                        before_checkout = await self.take_screenshot(
-                            page, url, device_type, 'before-checkout'
-                        )
-                        
-                        await button.click()
-                        await page.wait_for_load_state('networkidle', timeout=10000)
-                        
-                        after_checkout = await self.take_screenshot(
-                            page, url, device_type, 'checkout-page'
-                        )
-                        
-                        # Check if on checkout
-                        on_checkout = await page.evaluate('''() => {
-                            return window.location.hostname.includes('checkout') ||
-                                   window.location.pathname.includes('checkout') ||
-                                   document.body.innerText.includes('Shipping address');
-                        }''')
-                        
-                        if on_checkout:
-                            print('✓ Reached checkout')
-                        else:
-                            await self.log_issue({
-                                'page': url,
-                                'device': device_type,
-                                'severity': 'high',
-                                'category': 'Checkout Navigation',
-                                'issue': 'Checkout button clicked but not on checkout page',
-                                'screenshot': after_checkout
-                            })
-                        break
-                except:
-                    continue
-        
-        except Exception as e:
-            screenshot = await self.take_screenshot(page, url, device_type, 'checkout-error')
-            await self.log_issue({
-                'page': url,
-                'device': device_type,
-                'severity': 'high',
-                'category': 'Checkout Flow',
-                'issue': f'Checkout error: {str(e)}',
-                'screenshot': screenshot
-            })
-    
-    async def take_screenshot(self, page, url, device_type, label):
-        """Take and save screenshot"""
+    async def take_screenshot(self, page, url, device, step_name, description):
+        """Take a screenshot with metadata"""
         try:
             self.screenshot_counter += 1
-            filename = f'{self.screenshot_counter}_{device_type}_{label}_{int(datetime.now().timestamp())}.png'
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # Clean URL for filename
+            url_part = url.split('/')[-1][:30] if '/' in url else 'page'
+            
+            filename = f"{self.screenshot_counter:03d}_{device}_{step_name}_{timestamp}.png"
             filepath = self.screenshot_dir / filename
             
-            await page.screenshot(path=str(filepath), full_page=True)
+            await page.screenshot(path=filepath, full_page=True)
+            
+            print(f"  📸 Screenshot: {filename}")
+            print(f"     {description}")
+            
             return str(filepath)
         except Exception as e:
-            print(f'Screenshot failed: {e}')
+            print(f"  ✗ Screenshot failed: {str(e)}")
             return None
     
     async def log_issue(self, issue):
         """Log an issue"""
-        self.issues.append({
-            'timestamp': datetime.now().isoformat(),
-            **issue
-        })
+        self.issues.append(issue)
         
-        severity_emoji = {'critical': '🔴', 'high': '🟠', 'medium': '🟡', 'low': '🟢'}
+        severity_emoji = {
+            'critical': '🔴',
+            'high': '🟠',
+            'medium': '🟡',
+            'low': '🟢'
+        }
         emoji = severity_emoji.get(issue['severity'], '⚪')
-        print(f"{emoji} {issue['severity'].upper()}: {issue['category']} - {issue['issue']}")
-
-
-class GoogleDocsReporter:
-    """Generate Google Docs report with screenshots"""
+        
+        print(f"\n  {emoji} ISSUE LOGGED:")
+        print(f"     Severity: {issue['severity'].upper()}")
+        print(f"     Category: {issue['category']}")
+        print(f"     Details: {issue['issue']}")
     
-    def __init__(self, credentials_path):
-        creds = service_account.Credentials.from_service_account_file(
-            credentials_path,
-            scopes=[
-                'https://www.googleapis.com/auth/documents',
-                'https://www.googleapis.com/auth/drive.file'
-            ]
-        )
+    async def run_tests(self, urls):
+        """Run tests on all URLs"""
+        print("\n" + "="*70)
+        print("ENHANCED SHOPIFY QA AUTOMATION")
+        print("Complete User Journey Testing")
+        print("="*70)
+        print(f"\nTesting {len(urls)} URL(s)")
+        print(f"Each URL tested on: Desktop + Mobile")
+        print(f"Screenshots will be saved to: {self.screenshot_dir}")
+        print("\n" + "="*70)
         
-        self.docs_service = build('docs', 'v1', credentials=creds)
-        self.drive_service = build('drive', 'v3', credentials=creds)
-    
-    def create_report(self, issues, store_url=''):
-        """Create QA report in Google Docs"""
-        title = f'Shopify QA Report - {datetime.now().strftime("%Y-%m-%d")}'
-        
-        # Create document
-        doc = self.docs_service.documents().create(body={'title': title}).execute()
-        doc_id = doc['documentId']
-        
-        print(f'Created document: {doc_id}')
-        
-        # Build content
-        self._build_content(doc_id, issues, store_url)
-        
-        # Share document
-        self.drive_service.permissions().create(
-            fileId=doc_id,
-            body={'role': 'writer', 'type': 'anyone'}
-        ).execute()
-        
-        doc_url = f'https://docs.google.com/document/d/{doc_id}/edit'
-        print(f'Report: {doc_url}')
-        
-        return {'documentId': doc_id, 'url': doc_url}
-    
-    def _build_content(self, doc_id, issues, store_url):
-        """Build document content"""
-        requests = []
-        
-        # Title
-        requests.append({
-            'insertText': {
-                'location': {'index': 1},
-                'text': f'Shopify QA Report\n\n'
-            }
-        })
-        
-        # Metadata
-        metadata = f'''Report Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}
-Store: {store_url}
-Total Issues: {len(issues)}
-
-'''
-        requests.append({
-            'insertText': {
-                'location': {'index': 1},
-                'text': metadata
-            }
-        })
-        
-        # Summary
-        summary = self._generate_summary(issues)
-        requests.append({
-            'insertText': {
-                'location': {'index': 1},
-                'text': f'Summary\n{summary}\n\n'
-            }
-        })
-        
-        # Execute
-        if requests:
-            self.docs_service.documents().batchUpdate(
-                documentId=doc_id,
-                body={'requests': requests}
-            ).execute()
-        
-        # Add issues
-        self._add_issues(doc_id, issues)
-    
-    def _generate_summary(self, issues):
-        """Generate summary text"""
-        from collections import Counter
-        
-        severity_counts = Counter(i['severity'] for i in issues)
-        category_counts = Counter(i['category'] for i in issues)
-        
-        summary = 'Severity Breakdown:\n'
-        for severity, count in severity_counts.most_common():
-            summary += f'  • {severity.title()}: {count}\n'
-        
-        summary += '\nTop Categories:\n'
-        for category, count in list(category_counts.most_common(5)):
-            summary += f'  • {category}: {count}\n'
-        
-        critical = [i for i in issues if i['severity'] in ['critical', 'high']]
-        if critical:
-            summary += '\n⚠️ Critical Issues:\n'
-            for issue in critical[:5]:
-                summary += f'  • {issue["page"]} ({issue["device"]}): {issue["issue"]}\n'
-        
-        return summary
-    
-    def _add_issues(self, doc_id, issues):
-        """Add issues section"""
-        # Group by page
-        from collections import defaultdict
-        by_page = defaultdict(list)
-        for issue in issues:
-            by_page[issue['page']].append(issue)
-        
-        # Add each page's issues
-        for page_url, page_issues in by_page.items():
-            self._add_page_issues(doc_id, page_url, page_issues)
-    
-    def _add_page_issues(self, doc_id, page_url, issues):
-        """Add issues for a specific page"""
-        # Get current length
-        doc = self.docs_service.documents().get(documentId=doc_id).execute()
-        end_index = doc['body']['content'][-1]['endIndex'] - 1
-        
-        # Add page heading
-        text = f'\n\nPage: {page_url}\n'
-        
-        for issue in issues:
-            severity_emoji = {'critical': '🔴', 'high': '🟠', 'medium': '🟡', 'low': '🟢'}
-            emoji = severity_emoji.get(issue['severity'], '⚪')
+        for url in urls:
+            # Test on desktop
+            await self.test_url(url, 'desktop')
             
-            text += f'\n{emoji} {issue["severity"].upper()} - {issue["category"]} ({issue["device"]})\n'
-            text += f'{issue["issue"]}\n'
-            text += f'Time: {issue["timestamp"]}\n\n'
+            # Short break between tests
+            await asyncio.sleep(2)
+            
+            # Test on mobile
+            await self.test_url(url, 'mobile')
+            
+            # Break between URLs
+            await asyncio.sleep(2)
         
-        self.docs_service.documents().batchUpdate(
-            documentId=doc_id,
-            body={
-                'requests': [{
-                    'insertText': {
-                        'location': {'index': end_index},
-                        'text': text
-                    }
-                }]
-            }
-        ).execute()
+        # Save report
+        with open('qa-report.json', 'w') as f:
+            json.dump(self.issues, f, indent=2)
+        
+        # Print summary
+        print("\n" + "="*70)
+        print("TESTING COMPLETE!")
+        print("="*70)
+        print(f"\nTotal Screenshots: {self.screenshot_counter}")
+        print(f"Total Issues Found: {len(self.issues)}")
+        
+        # Issue breakdown
+        severity_count = {}
+        for issue in self.issues:
+            sev = issue['severity']
+            severity_count[sev] = severity_count.get(sev, 0) + 1
+        
+        if severity_count:
+            print("\nIssues by Severity:")
+            for sev in ['critical', 'high', 'medium', 'low']:
+                if sev in severity_count:
+                    emoji = {'critical': '🔴', 'high': '🟠', 'medium': '🟡', 'low': '🟢'}[sev]
+                    print(f"  {emoji} {sev.title()}: {severity_count[sev]}")
+        
+        print(f"\nReport saved to: qa-report.json")
+        print(f"Screenshots saved to: {self.screenshot_dir}/")
+        print("="*70 + "\n")
+        
+        return self.issues
 
 
-# Main execution
 async def main():
-    import sys
+    """Main execution"""
+    urls = sys.argv[1:] if len(sys.argv) > 1 else []
     
-    if len(sys.argv) < 2:
-        print('Usage: python shopify_qa.py <url1> [url2] ...')
+    if not urls:
+        if os.path.exists('urls.txt'):
+            with open('urls.txt') as f:
+                urls = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+    
+    if not urls:
+        print("Error: No URLs provided")
+        print("\nUsage:")
+        print("  python shopify_qa.py <url1> [url2] ...")
+        print("  or create urls.txt file with one URL per line")
         sys.exit(1)
     
-    urls = sys.argv[1:]
-    
-    # Run QA tests
-    qa = ShopifyQA()
-    issues = await qa.run_tests(urls)
-    
-    print(f'\n=== QA Complete ===')
-    print(f'Total issues: {len(issues)}')
-    
-    # Save to JSON
-    with open('qa-report.json', 'w') as f:
-        json.dump(issues, f, indent=2)
-    print('Saved to qa-report.json')
-    
-    # Generate Google Doc (if credentials available)
-    creds_path = os.environ.get('GOOGLE_CREDENTIALS_PATH')
-    if creds_path and os.path.exists(creds_path):
-        reporter = GoogleDocsReporter(creds_path)
-        result = reporter.create_report(issues, urls[0] if urls else '')
-        print(f'Report URL: {result["url"]}')
-    else:
-        print('Tip: Set GOOGLE_CREDENTIALS_PATH to auto-generate Google Doc report')
+    qa = EnhancedShopifyQA()
+    await qa.run_tests(urls)
 
 
 if __name__ == '__main__':
