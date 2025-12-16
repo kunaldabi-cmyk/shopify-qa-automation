@@ -456,7 +456,7 @@ class EnhancedShopifyQA:
                 print(f"   ├─ Initial Load: {perf.get('initial_load', 'N/A')}s")
                 print(f"   ├─ Network Idle: {perf.get('network_idle', 'N/A')}s")
                 print(f"   ├─ DOM Ready: {perf.get('dom_content_loaded', 'N/A')}s")
-                print(f("   └─ Fully Loaded: {perf.get('fully_loaded', 'N/A')}s")
+                print(f"   └─ Fully Loaded: {perf.get('fully_loaded', 'N/A')}s")
         
         print(f"\n📁 Files Generated:")
         print(f"   ├─ qa-report.json (issues)")
