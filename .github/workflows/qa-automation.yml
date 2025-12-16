@@ -1,13 +1,17 @@
-name: Shopify QA Automation with Screenshots
+name: Shopify QA - Ultra Detailed (4x Daily)
 
 on:
   schedule:
-    - cron: '30 13 * * 1-5'  # 9 AM EST = 7:30 PM IST
-    - cron: '30 18 * * 1-5'  # 2 PM EST = 12:30 AM IST
-  workflow_dispatch:
+    # Run 4 times every day (every 6 hours)
+    - cron: '0 0 * * *'    # 12:00 AM EST (5:30 AM IST)
+    - cron: '0 6 * * *'    # 6:00 AM EST (11:30 AM IST)
+    - cron: '0 12 * * *'   # 12:00 PM EST (5:30 PM IST)
+    - cron: '0 18 * * *'   # 6:00 PM EST (11:30 PM IST)
+  
+  workflow_dispatch:  # Manual trigger button
 
 jobs:
-  qa-test:
+  ultra-detailed-qa:
     runs-on: ubuntu-latest
     
     steps:
@@ -25,17 +29,19 @@ jobs:
           playwright install chromium
           playwright install-deps
       
-      - name: Run QA Tests
+      - name: Run Ultra-Detailed QA Tests
         run: |
+          echo "Starting ultra-detailed QA testing..."
+          echo "Time: $(date)"
           python shopify_qa.py $(cat urls.txt)
       
       - name: Upload Screenshots ZIP
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: screenshots-zip-${{ github.run_number }}
+          name: screenshots-${{ github.run_number }}-${{ github.run_attempt }}
           path: qa-screenshots.zip
-          retention-days: 30
+          retention-days: 7  # Keep for 7 days
       
       - name: Upload Individual Screenshots
         if: always()
@@ -43,7 +49,7 @@ jobs:
         with:
           name: screenshots-individual-${{ github.run_number }}
           path: qa-screenshots/
-          retention-days: 30
+          retention-days: 7
       
       - name: Upload QA Report
         if: always()
@@ -65,20 +71,8 @@ jobs:
         id: stats
         if: always()
         run: |
-          if [ -f qa-report.json ]; then
-            TOTAL=$(python -c "import json; print(len(json.load(open('qa-report.json'))))" 2>/dev/null || echo "0")
-            CRITICAL=$(python -c "import json; data=json.load(open('qa-report.json')); print(len([i for i in data if i.get('severity') in ['critical', 'high']]))" 2>/dev/null || echo "0")
-          else
-            TOTAL=0
-            CRITICAL=0
-          fi
-          
-          # Get screenshot count
-          if [ -d qa-screenshots ]; then
-            SCREENSHOT_COUNT=$(ls -1 qa-screenshots/*.png 2>/dev/null | wc -l)
-          else
-            SCREENSHOT_COUNT=0
-          fi
+          # Count screenshots
+          SCREENSHOT_COUNT=$(ls -1 qa-screenshots/*.png 2>/dev/null | wc -l || echo "0")
           
           # Get ZIP size
           if [ -f qa-screenshots.zip ]; then
@@ -87,20 +81,33 @@ jobs:
             ZIP_SIZE="N/A"
           fi
           
-          # Get performance data
+          # Count issues
+          if [ -f qa-report.json ]; then
+            TOTAL=$(python -c "import json; print(len(json.load(open('qa-report.json'))))" 2>/dev/null || echo "0")
+            CRITICAL=$(python -c "import json; data=json.load(open('qa-report.json')); print(len([i for i in data if i.get('severity') in ['critical', 'high']]))" 2>/dev/null || echo "0")
+          else
+            TOTAL=0
+            CRITICAL=0
+          fi
+          
+          # Performance
           if [ -f performance-report.json ]; then
-            AVG_LOAD=$(python -c "import json; data=json.load(open('performance-report.json')); times=[p.get('total_ready_time', 0) for p in data]; print(round(sum(times)/len(times), 2) if times else 0)" 2>/dev/null || echo "N/A")
+            AVG_LOAD=$(python -c "import json; data=json.load(open('performance-report.json')); times=[p.get('fully_loaded', 0) for p in data]; print(round(sum(times)/len(times), 2) if times else 0)" 2>/dev/null || echo "N/A")
           else
             AVG_LOAD="N/A"
           fi
           
-          echo "total=$TOTAL" >> $GITHUB_OUTPUT
-          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          # Get current time
+          CURRENT_TIME=$(date '+%Y-%m-%d %I:%M %p EST')
+          
           echo "screenshot_count=$SCREENSHOT_COUNT" >> $GITHUB_OUTPUT
           echo "zip_size=$ZIP_SIZE" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
           echo "avg_load=$AVG_LOAD" >> $GITHUB_OUTPUT
+          echo "current_time=$CURRENT_TIME" >> $GITHUB_OUTPUT
       
-      - name: Send Email with All Attachments
+      - name: Send Detailed Email Report
         if: always()
         uses: dawidd6/action-send-mail@v3
         with:
@@ -108,7 +115,7 @@ jobs:
           server_port: 587
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: '🔍 Shopify QA Report - ${{ steps.stats.outputs.screenshot_count }} Screenshots | ${{ steps.stats.outputs.total }} Issues'
+          subject: '🔍 Detailed QA Report - ${{ steps.stats.outputs.screenshot_count }} Screenshots | Run #${{ github.run_number }}'
           to: ${{ secrets.NOTIFICATION_EMAIL }}
           from: Shopify QA Bot <${{ secrets.EMAIL_USERNAME }}>
           html_body: |
@@ -116,59 +123,74 @@ jobs:
             <html>
             <head>
               <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 700px; margin: 0 auto; background: #f5f5f5; }
-                .container { background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin: 20px; }
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+                .container { max-width: 700px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
                 .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 30px; text-align: center; }
                 .header h1 { margin: 0; font-size: 28px; font-weight: 700; }
-                .header p { margin: 10px 0 0 0; opacity: 0.95; font-size: 16px; }
+                .header p { margin: 10px 0 0 0; opacity: 0.95; font-size: 15px; }
+                .badge { display: inline-block; background: rgba(255,255,255,0.2); padding: 5px 12px; border-radius: 15px; font-size: 12px; margin: 5px; }
                 .content { padding: 30px; }
+                .highlight-box { background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%); padding: 25px; border-radius: 12px; margin: 20px 0; border: 2px solid #667eea; }
+                .highlight-box h2 { margin-top: 0; color: #667eea; font-size: 22px; }
                 .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin: 25px 0; }
-                .stat-card { background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 4px solid #667eea; }
-                .stat-card.critical { border-left-color: #dc3545; }
-                .stat-label { font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
-                .stat-value { font-size: 32px; font-weight: 700; color: #333; }
+                .stat-card { background: #f8f9fa; padding: 20px; border-radius: 10px; text-align: center; }
+                .stat-card.critical { background: #ffe6e6; border-left: 4px solid #dc3545; }
+                .stat-value { font-size: 36px; font-weight: 700; color: #333; margin: 10px 0; }
                 .stat-value.critical { color: #dc3545; }
-                .download-section { background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%); padding: 25px; border-radius: 10px; margin: 25px 0; border: 2px dashed #667eea; }
-                .download-button { display: inline-block; padding: 16px 32px; background: #667eea; color: white !important; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; margin: 8px; box-shadow: 0 4px 12px rgba(102,126,234,0.3); transition: all 0.3s; }
-                .download-button:hover { background: #5568d3; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(102,126,234,0.4); }
-                .download-button.secondary { background: #28a745; box-shadow: 0 4px 12px rgba(40,167,69,0.3); }
-                .download-button.secondary:hover { background: #218838; }
-                .info-box { background: #e8f5e9; padding: 20px; border-radius: 10px; border-left: 4px solid #4caf50; margin: 20px 0; }
-                .info-box h3 { margin-top: 0; color: #2e7d32; font-size: 18px; }
-                .info-box ul { margin: 10px 0; padding-left: 20px; }
-                .info-box li { margin: 8px 0; color: #333; }
+                .stat-label { font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+                .download-btn { display: inline-block; padding: 16px 32px; background: #667eea; color: white !important; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 10px; box-shadow: 0 4px 12px rgba(102,126,234,0.3); transition: all 0.3s; }
+                .download-btn:hover { background: #5568d3; transform: translateY(-2px); }
+                .info-section { background: #e8f5e9; padding: 20px; border-radius: 10px; border-left: 4px solid #4caf50; margin: 20px 0; }
+                .info-section h3 { margin-top: 0; color: #2e7d32; font-size: 18px; }
+                .info-section ul { margin: 10px 0; padding-left: 20px; }
+                .info-section li { margin: 8px 0; color: #333; line-height: 1.6; }
                 .alert-box { background: #fff3cd; padding: 20px; border-radius: 10px; border-left: 4px solid #ffc107; margin: 20px 0; }
-                .alert-box strong { color: #856404; }
-                .performance-box { background: #e3f2fd; padding: 20px; border-radius: 10px; border-left: 4px solid #2196f3; margin: 20px 0; }
-                .performance-box h3 { margin-top: 0; color: #1565c0; }
-                .perf-metric { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #90caf9; }
-                .perf-metric:last-child { border-bottom: none; }
-                .perf-label { color: #666; }
-                .perf-value { font-weight: 600; color: #1565c0; }
-                .footer { margin-top: 30px; padding-top: 25px; border-top: 2px solid #e0e0e0; font-size: 13px; color: #666; text-align: center; }
-                .footer-link { color: #667eea; text-decoration: none; }
-                .badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-left: 8px; }
-                .badge.usa { background: #e3f2fd; color: #1565c0; }
+                .screenshot-info { background: #e3f2fd; padding: 20px; border-radius: 10px; border-left: 4px solid #2196f3; margin: 20px 0; }
+                .screenshot-info h3 { margin-top: 0; color: #1565c0; }
+                .screenshot-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 15px; }
+                .screenshot-item { background: white; padding: 12px; border-radius: 6px; font-size: 13px; border: 1px solid #90caf9; }
+                .screenshot-item strong { color: #1565c0; display: block; margin-bottom: 5px; }
+                .footer { margin-top: 30px; padding-top: 25px; border-top: 2px solid #e0e0e0; text-align: center; color: #666; font-size: 13px; }
+                .schedule-box { background: #fff8e1; padding: 20px; border-radius: 10px; border-left: 4px solid #ffa726; margin: 20px 0; }
+                .schedule-box h3 { margin-top: 0; color: #e65100; }
               </style>
             </head>
             <body>
               <div class="container">
                 <div class="header">
-                  <h1>🔍 Shopify QA Automation Report</h1>
-                  <p>Complete User Journey Testing <span class="badge usa">🇺🇸 USA Traffic</span></p>
+                  <h1>🔍 Ultra-Detailed QA Report</h1>
+                  <p>Scroll-by-Scroll Visual Analysis</p>
+                  <div>
+                    <span class="badge">🇺🇸 USA Traffic</span>
+                    <span class="badge">🤖 Automated</span>
+                    <span class="badge">📸 ${ {steps.stats.outputs.screenshot_count }} Screenshots</span>
+                  </div>
                 </div>
                 
                 <div class="content">
-                  <h2 style="margin-top: 0; color: #333;">Test Summary</h2>
+                  <div class="highlight-box">
+                    <h2>📦 Download Complete Test Results</h2>
+                    <p style="margin: 15px 0; color: #666;">All screenshots and detailed reports are ready:</p>
+                    <div style="text-align: center;">
+                      <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" class="download-btn">
+                        📥 Download ZIP (${{ steps.stats.outputs.zip_size }})
+                      </a>
+                    </div>
+                    <p style="font-size: 12px; color: #666; text-align: center; margin-top: 10px;">
+                      Click → Scroll to "Artifacts" → Download ZIP file
+                    </p>
+                  </div>
+                  
+                  <h2 style="color: #333;">Test Summary</h2>
                   
                   <div class="stats-grid">
                     <div class="stat-card">
-                      <div class="stat-label">📸 Screenshots Taken</div>
+                      <div class="stat-label">📸 Total Screenshots</div>
                       <div class="stat-value">${{ steps.stats.outputs.screenshot_count }}</div>
                     </div>
                     
                     <div class="stat-card">
-                      <div class="stat-label">🐛 Total Issues</div>
+                      <div class="stat-label">🐛 Issues Found</div>
                       <div class="stat-value">${{ steps.stats.outputs.total }}</div>
                     </div>
                     
@@ -179,85 +201,94 @@ jobs:
                     
                     <div class="stat-card">
                       <div class="stat-label">⏱️ Avg Load Time</div>
-                      <div class="stat-value" style="font-size: 24px;">${{ steps.stats.outputs.avg_load }}s</div>
+                      <div class="stat-value" style="font-size: 28px;">${{ steps.stats.outputs.avg_load }}s</div>
                     </div>
                   </div>
 
-                  ${{ steps.stats.outputs.critical > 0 && '<div class="alert-box"><strong>⚠️ Attention Required!</strong><br>Critical issues detected that may be blocking customers from completing purchases. Please review the screenshots and take immediate action.</div>' || '' }}
+                  ${{ steps.stats.outputs.critical > 0 && '<div class="alert-box"><strong>⚠️ Critical Issues Detected!</strong><br>Please review the screenshots immediately. Some issues may be blocking customer purchases.</div>' || '' }}
                   
-                  <div class="download-section">
-                    <h3 style="margin-top: 0; color: #667eea; font-size: 20px;">📦 Download Complete Test Results</h3>
-                    <p style="margin-bottom: 20px; color: #666;">All screenshots and reports are ready for download:</p>
-                    
-                    <div style="text-align: center;">
-                      <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" class="download-button">
-                        📥 Download Screenshots ZIP (${{ steps.stats.outputs.zip_size }})
-                      </a>
-                      
-                      <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" class="download-button secondary">
-                        📊 View All Artifacts
-                      </a>
+                  <div class="screenshot-info">
+                    <h3>📸 What's in the Screenshots</h3>
+                    <div class="screenshot-list">
+                      <div class="screenshot-item">
+                        <strong>🎯 Initial Load</strong>
+                        Page top, above the fold
+                      </div>
+                      <div class="screenshot-item">
+                        <strong>📜 Scroll Journey</strong>
+                        Every viewport scroll position
+                      </div>
+                      <div class="screenshot-item">
+                        <strong>🖼️ Image Check</strong>
+                        Each image verified, broken ones highlighted in red
+                      </div>
+                      <div class="screenshot-item">
+                        <strong>🎯 Seat Selection</strong>
+                        Before/after with element highlighted
+                      </div>
+                      <div class="screenshot-item">
+                        <strong>🎨 Color Pick</strong>
+                        Button highlighted, options visible
+                      </div>
+                      <div class="screenshot-item">
+                        <strong>🛒 Add to Cart</strong>
+                        Button highlighted, popup shown
+                      </div>
+                      <div class="screenshot-item">
+                        <strong>💳 Checkout Flow</strong>
+                        Contact, shipping, payment sections
+                      </div>
+                      <div class="screenshot-item">
+                        <strong>❌ Error Captures</strong>
+                        Any failures with context
+                      </div>
                     </div>
-                    
-                    <p style="margin-top: 15px; font-size: 13px; color: #666; text-align: center;">
-                      Click the button above → Scroll to "Artifacts" section → Download ZIP file
-                    </p>
                   </div>
                   
-                  <div class="performance-box">
-                    <h3>⚡ Performance Metrics</h3>
-                    <div class="perf-metric">
-                      <span class="perf-label">Average Page Load Time</span>
-                      <span class="perf-value">${{ steps.stats.outputs.avg_load }} seconds</span>
-                    </div>
-                    <div class="perf-metric">
-                      <span class="perf-label">Test Location</span>
-                      <span class="perf-value">🇺🇸 New York, USA</span>
-                    </div>
-                    <div class="perf-metric">
-                      <span class="perf-label">Devices Tested</span>
-                      <span class="perf-value">💻 Desktop + 📱 Mobile</span>
-                    </div>
-                    <div class="perf-metric">
-                      <span class="perf-label">Total Test Duration</span>
-                      <span class="perf-value">${{ github.event.repository.updated_at }}</span>
-                    </div>
-                  </div>
-                  
-                  <div class="info-box">
-                    <h3>✅ Complete User Journey Tested</h3>
+                  <div class="info-section">
+                    <h3>✅ Complete Testing Performed</h3>
                     <ul>
-                      <li>✓ Page loading with performance timing</li>
-                      <li>✓ All images and resources verification</li>
-                      <li>✓ "Front & Rear Seats" selection</li>
-                      <li>✓ Color option selection</li>
-                      <li>✓ Add to cart functionality</li>
-                      <li>✓ Cart popup verification</li>
-                      <li>✓ Checkout navigation</li>
-                      <li>✓ Screenshots at every step</li>
-                      <li>✓ Desktop (1920x1080) view</li>
-                      <li>✓ Mobile (iPhone) view</li>
+                      <li><strong>Page Load Analysis:</strong> Timing from initial request to fully loaded</li>
+                      <li><strong>Scroll-by-Scroll Capture:</strong> Every section of page photographed</li>
+                      <li><strong>Image Verification:</strong> All images checked, broken ones highlighted</li>
+                      <li><strong>Layout Check:</strong> Overlapping elements detected</li>
+                      <li><strong>Element Highlighting:</strong> Each interactive element outlined before clicking</li>
+                      <li><strong>Complete User Journey:</strong> From landing to checkout documented</li>
+                      <li><strong>Error Documentation:</strong> Issues captured with visual context</li>
+                      <li><strong>Desktop + Mobile:</strong> Full testing on both device types</li>
                     </ul>
                   </div>
                   
-                  <div style="background: #fff3e0; padding: 20px; border-radius: 10px; border-left: 4px solid #ff9800; margin: 20px 0;">
-                    <h3 style="margin-top: 0; color: #e65100;">🌍 Traffic Simulation Details</h3>
-                    <p style="margin: 10px 0; color: #333;"><strong>Simulated as:</strong> Real USA user from New York</p>
-                    <p style="margin: 10px 0; color: #333;"><strong>User Agent:</strong> Chrome on Windows 10 / Safari on iPhone</p>
-                    <p style="margin: 10px 0; color: #333;"><strong>Timezone:</strong> America/New_York (EST)</p>
-                    <p style="margin: 10px 0; color: #333;"><strong>Geolocation:</strong> New York City coordinates</p>
-                    <p style="margin: 10px 0; color: #333;"><strong>Analytics:</strong> Will appear as organic USA traffic</p>
+                  <div class="schedule-box">
+                    <h3>⏰ Automated Testing Schedule</h3>
+                    <p style="margin: 10px 0; color: #333;"><strong>This test runs automatically 4 times daily:</strong></p>
+                    <ul style="margin: 10px 0; padding-left: 20px;">
+                      <li>🌅 12:00 AM EST (5:30 AM IST)</li>
+                      <li>☀️ 6:00 AM EST (11:30 AM IST)</li>
+                      <li>🌤️ 12:00 PM EST (5:30 PM IST)</li>
+                      <li>🌙 6:00 PM EST (11:30 PM IST)</li>
+                    </ul>
+                    <p style="margin: 10px 0; color: #666; font-size: 13px;">
+                      <strong>This run:</strong> ${{ steps.stats.outputs.current_time }}
+                    </p>
+                  </div>
+                  
+                  <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                    <h3 style="margin-top: 0; color: #333;">📊 Performance Metrics</h3>
+                    <p style="margin: 8px 0;"><strong>Average Page Load:</strong> ${{ steps.stats.outputs.avg_load }}s</p>
+                    <p style="margin: 8px 0;"><strong>Test Location:</strong> 🇺🇸 New York, USA</p>
+                    <p style="margin: 8px 0;"><strong>Run Number:</strong> #${{ github.run_number }}</p>
+                    <p style="margin: 8px 0;"><strong>ZIP File Size:</strong> ${{ steps.stats.outputs.zip_size }}</p>
                   </div>
                   
                   <div class="footer">
                     <p><strong>Shopify QA Automation System</strong></p>
-                    <p style="margin: 10px 0;">Automated testing during USA business hours to catch issues when your customers are most active.</p>
+                    <p style="margin: 10px 0;">Ultra-detailed visual testing with comprehensive screenshots</p>
                     <p style="margin-top: 15px;">
-                      <a href="https://github.com/${{ github.repository }}" class="footer-link">View Repository</a> |
-                      <a href="https://github.com/${{ github.repository }}/actions" class="footer-link">All Test Runs</a>
+                      <a href="https://github.com/${{ github.repository }}/actions" style="color: #667eea;">View All Test Runs</a>
                     </p>
-                    <p style="margin-top: 15px; font-size: 11px; color: #999;">
-                      Run ID: ${{ github.run_id }} | Run #${{ github.run_number }}
+                    <p style="margin-top: 10px; font-size: 11px; color: #999;">
+                      Run ID: ${{ github.run_id }} | Automated QA
                     </p>
                   </div>
                 </div>
