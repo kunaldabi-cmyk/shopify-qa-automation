@@ -62,7 +62,11 @@ class SeatCoverQA:
                 response = await page.goto(url, timeout=60000, wait_until='domcontentloaded')
                 
                 print(f"  ⏱️  Waiting for network to be idle...")
-                await page.wait_for_load_state('networkidle', timeout=30000)
+                try:
+                    await page.wait_for_load_state('networkidle', timeout=60000)
+                    print(f"  ✓ Network idle reached")
+                except Exception as e:
+                    print(f"  ⚠️  Network didn't fully idle (still loading some resources)")
                 
                 load_time = time.time() - start_time
                 print(f"  ✓ Page loaded in {load_time:.2f}s")
@@ -649,7 +653,20 @@ class SeatCoverQA:
         print(f"📱 Devices: Desktop + Mobile")
         print("\n" + "="*80)
         
+        # Clean URLs - remove \r, \n, and whitespace
+        cleaned_urls = []
         for url in urls:
+            cleaned = url.strip().replace('\r', '').replace('\n', '')
+            if cleaned and cleaned.startswith('http'):
+                cleaned_urls.append(cleaned)
+                print(f"  ✓ Will test: {cleaned}")
+            else:
+                print(f"  ⚠️  Skipping invalid URL: {repr(url)}")
+        
+        print(f"\n  Total valid URLs: {len(cleaned_urls)}")
+        print("=" * 80)
+        
+        for url in cleaned_urls:
             await self.test_url(url, 'desktop')
             await asyncio.sleep(3)
             await self.test_url(url, 'mobile')
