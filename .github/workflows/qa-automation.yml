@@ -1,12 +1,10 @@
-name: Shopify QA - Ultra Detailed (4x Daily)
++name: Shopify QA - Ultra Detailed (Daily)
 
 on:
   schedule:
-    # Run 4 times every day (every 6 hours)
-    - cron: '0 0 * * *'    # 12:00 AM EST (5:30 AM IST)
-    - cron: '0 6 * * *'    # 6:00 AM EST (11:30 AM IST)
-    - cron: '0 12 * * *'   # 12:00 PM EST (5:30 PM IST)
-    - cron: '0 18 * * *'   # 6:00 PM EST (11:30 PM IST)
+    # Run once daily at peak shopping hour for IST audiences
+    # GitHub Actions cron is UTC. 21:00 IST = 15:30 UTC
+    - cron: '30 15 * * *'
   
   workflow_dispatch:  # Manual trigger button
 
